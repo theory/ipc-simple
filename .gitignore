@@ -1,0 +1,7 @@
+_build
+blib
+IPC-Simple-*
+MANIFEST
+MANIFEST.bak
+*META.*
+Build
