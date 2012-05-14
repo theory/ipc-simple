@@ -70,10 +70,6 @@ sub close {
     }
 }
 
-sub eof {
-    shift->input->eof;
-}
-
 sub getc {
     shift->output->getc;
 }
@@ -92,6 +88,10 @@ sub getline {
 
 sub getlines {
     shift->output->getlines;
+}
+
+sub eof {
+    shift->input->eof;
 }
 
 sub print {
@@ -160,7 +160,19 @@ IPC::Simple - Simple File-handle based command execution, with detailed diagnost
 
 =head1 Description
 
+First of all, if all you want is a better C<system> or backticks interface, go
+use L<IPC::System::Simple>, instead.
 
+IPC::Simple provides a simple, file-handle-based interface for executing
+commands. You can read the command's output, write to its input, or read its
+errors. This is just like L<IPC::Open3>, except that you don't have to worry
+about trapping errors or how to deal with platform-specific error handling.
+IPC::Simple takes care of all that for you (well, it tries to), and turns all
+such errors into exceptions.
+
+IPC::Simple also provides a few convenience methods to the input and output
+file handles, so you can just read or write as appropriate, without thinking
+too much about what file handle to mess with.
 
 =head1 Interface
 
@@ -168,41 +180,131 @@ IPC::Simple - Simple File-handle based command execution, with detailed diagnost
 
 =head3 C<new>
 
+  my $ipc = IPC::Simple->new('some_command', @args);
 
+Executes the command and its arguments, hooking up the C<input>, C<output>,
+and C<errput> file handles, and returns the resulting IPC::Simple object. If
+any errors are encountered executing the command, an exception will be thrown.
 
 =head2 Accessors
 
 =head3 C<input>
 
+  my $input = $ipc->input;
+  $input->print('hello');
+
+Returns an IO::File::PipeWriter handle for the command's input (C<STDIN>).
+This object is a subclass of L<IO::File> and supports all the same methods.
+Notably, when write methods are called, an error handler throws any exceptions
+errors from the child process. You are therefor encouraged to execute write
+actions as method calls, rather than core functions. In other words, do this:
+
+  $input->say('yes');
+
+Rather than this:
+
+  say $input 'yes';
+
 =head3 C<output>
 
+  my $output = $ipc->output;
+  print while <$output>;
+
+Returns the output file handle (C<STDOUT>) for the command. This is an
+L<IO::File> object. Use it to read the command's output.
+
 =head3 C<errput>
+
+  my $errput = $ipc->errput;
+  print while <$errput>;
+
+Returns the error output file handle (C<STDERR>) for the command. This is an
+L<IO::File> object. Use it to read the command's error output.
 
 =head2 Instance Methods
 
 =head3 C<close>
 
-=head3 C<eof>
+  $ipc->close;
+
+Close the connection to the command. This closes all three file handles. In
+the event that any fails to close, an exception will be thrown.
+
+=head2 Delegate Methods
+
+These methods provide convenient access to the corresponding methods on the
+input or output handles, as appropriate. This makes it simple to simply write
+to and read from the command without worrying about which handle to use. Only
+the most commonly-used methods are provided; call directly on the appropriate
+file handles for other methods.
+
+
 
 =head3 C<getc>
 
-=head3 C<getline>
+  my $c = $ipc->getc;
 
-=head3 C<getlines>
-
-=head3 C<print>
-
-=head3 C<printf>
+Calls C<getc> on the command's output file handle.
 
 =head3 C<read>
 
-=head3 C<say>
+ $ipc->read(my $buf, 1024);
+
+Calls C<read> on the command's output file handle.
 
 =head3 C<sysread>
 
-=head3 C<syswrite>
+ $ipc->sysread(my $buf, 1024);
+
+Calls C<sysread> on the command's output file handle.
+
+=head3 C<getline>
+
+  my $line = $ipc->getline;
+
+Calls C<getline> on the command's output file handle.
+
+=head3 C<getlines>
+
+  my @lines = $ipc->getlines;
+
+Calls C<getlines> on the command's output file handle.
+
+=head3 C<eof>
+
+  say 'done' if $ipc->eof;
+
+Calls C<eof> on the command's input file handle.
+
+=head3 C<print>
+
+  $ipc->print('yes');
+
+Calls C<print> on the command's input file handle.
+
+=head3 C<printf>
+
+  $ipc->printf('%u minutes', 12);
+
+Calls C<printf> on the command's input file handle.
+
+=head3 C<say>
+
+  $ipc->say('yes');
+
+Calls C<say> on the command's input file handle.
 
 =head3 C<write>
+
+  $ipc->write;
+
+Calls C<write> on the command's input file handle.
+
+=head3 C<syswrite>
+
+  $ipc->syswrite($buf, 1024);
+
+Calls C<syswrite> on the command's input file handle.
 
 =head1 See Also
 
