@@ -5,6 +5,29 @@ use strict;
 use warnings;
 use IPC::Open3;
 use Carp;
+use Config;
+use POSIX qw(WIFEXITED WEXITSTATUS WIFSIGNALED WTERMSIG);
+use constant UNDEFINED_POSIX_RE => qr{not (?:defined|a valid) POSIX macro|not implemented on this architecture};
+use constant EXIT_ANY_CONST => -1;			# Used internally
+
+my @Signal_from_number = split(' ', $Config{sig_name});
+
+# TODO: Ideally, $NATIVE_WCOREDUMP should be a constant.
+
+my $NATIVE_WCOREDUMP;
+
+eval { POSIX::WCOREDUMP(1); };
+
+if ($@ =~ UNDEFINED_POSIX_RE) {
+	*WCOREDUMP = sub { $_[0] & 128 };
+        $NATIVE_WCOREDUMP = 0;
+} elsif ($@) {
+    croak sprintf q{IPC::Simple does not understand the POSIX error '%s'.  Please check http://search.cpan.org/perldoc?IPC::Simple to see if there is an updated version.  If not please report this as a bug to http://rt.cpan.org/Public/Bug/Report.html?Queue=IPC-System-Simple}, $@;
+} else {
+	# POSIX actually has it defined!  Huzzah!
+	*WCOREDUMP = \&POSIX::WCOREDUMP;
+        $NATIVE_WCOREDUMP = 1;
+}
 
 sub new {
     my $class = shift;
@@ -16,6 +39,7 @@ sub new {
     my $out = IO::File->new;
     my $err = IO::File->new;
 
+    use Data::Dump; ddx [$cmd, @_];
     my $pid = eval { open3 $in, $out, $err, $cmd, @_ };
     # Handle errors.
     if ($@) {
@@ -42,12 +66,14 @@ sub new {
         output  => $out,
         errput  => $err,
         pid     => $pid,
+        exitval => -1,
     } => $class;
 }
 
-sub input  { shift->{input}  }
-sub output { shift->{output} }
-sub errput { shift->{errput} }
+sub input   { shift->{input}   }
+sub output  { shift->{output}  }
+sub errput  { shift->{errput}  }
+sub exitval { shift->{exitval} }
 
 sub close {
     my $self = shift;
@@ -61,8 +87,7 @@ sub close {
         alarm 2;
         waitpid $self->{pid}, 0;
         alarm 0;
-        croak sprintf '"%s" unexpectedly returned exit value %d', $self->{cmd}, $? >> 8
-            if $?;
+        $self->_process_child_error($?, [0]);
     };
     if ($@) {
         die unless $@ eq "alarm\n";
@@ -112,6 +137,51 @@ sub write {
 
 sub syswrite {
     shift->input->syswrite(@_);
+}
+
+# This subroutine performs the difficult task of interpreting
+# $?.  It's not intended to be called directly, as it will
+# croak on errors, and its implementation and interface may
+# change in the future.
+
+sub _process_child_error {
+    my ($self, $child_error, $valid_returns) = @_;
+	
+	$self->{exitval} = -1;
+
+	my $coredump = WCOREDUMP($child_error);
+
+    # There's a bug in perl 5.10.0 where if the system does not provide a
+    # native WCOREDUMP, then $? will never contain coredump information. This
+    # code checks to see if we have the bug, and works around it if needed.
+
+    if ($] >= 5.010 and not $NATIVE_WCOREDUMP) {
+        $coredump ||= WCOREDUMP( ${^CHILD_ERROR_NATIVE} );
+    }
+
+	if ($child_error == -1) {
+		croak sprintf(q{"%s" failed to start: "%s"}, $self->{cmd}, $!);
+
+	} elsif ( WIFEXITED( $child_error ) ) {
+		$self->{exitval} = WEXITSTATUS( $child_error );
+        return $self if $self->{exitval} == 0;
+
+	} elsif ( WIFSIGNALED( $child_error ) ) {
+		my $signal_no   = WTERMSIG( $child_error );
+		my $signal_name = $Signal_from_number[$signal_no] || "UNKNOWN";
+
+		croak sprintf(
+            q{"%s" died to signal "%s" (%d)%s},
+            $self->{cmd}, $signal_name, $signal_no,
+            ($coredump ? " and dumped core" : "")
+        );
+	}
+
+	croak sprintf(
+        q{Internal error in IPC::System::Simple: "%s"},
+        qq{'$self->{cmd}' ran without exit value or signal}
+    );
+
 }
 
 package IO::File::PipeWriter;
